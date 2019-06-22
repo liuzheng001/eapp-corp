@@ -33,16 +33,23 @@ class Message
 
     public function uploadImg($accessToken, $opt)
     {
-       /* $response = $this->http->post("/media/upload",
+        $response = $this->http->post("/media/upload",
             array("access_token" => $accessToken,"type"=>'image'),
-            $opt,true
-        );*/
-
-//        $response = $this->http->uploadFile();
+            $opt);
+        return $response;
+     /*   $response = $this->http->uploadFile();
        $response = $this->http->post("/media/upload",
             array("access_token" => $accessToken,"type"=>'file'),
             $opt,true
         );
+        return $response;*/
+
+    }
+    public function getSpaceId($accessToken, $opt)
+    {
+        $response = $this->http->post("/media/upload",
+            array("access_token" => $accessToken,"type"=>'image'),
+            $opt);
         return $response;
 
     }

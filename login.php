@@ -40,7 +40,8 @@ if ($access_token) {
 
         if ($res->errcode == 0) {
             echo json_encode(array(
-                "result" => array('userId' => $res->userid, 'userName' => $user->name),
+                "result" => array('userId' => $res->userid, 'userName' => $user->name, 'departments'=> $user->department,
+),
             ));
         } else {
             Log::e('获取用户信息错误，'.$user->errmsg);

@@ -399,7 +399,6 @@ class fmREST {
         }else if($operationType){
             Log::i("【fm success 】: operationType:".$operationType."msg:".$result['messages'][0]['message']);
         }
-
         return true;
     }
 }

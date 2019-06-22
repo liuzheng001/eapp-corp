@@ -1,4 +1,9 @@
 <?php
+header("Access-Control-Allow-Origin: *");
+header('content-type:text/html;charset=utf8');
+//设置服务器为北京时间
+date_default_timezone_set('Asia/Shanghai');
+
 require_once(__DIR__ . "/config.php");
 require_once(__DIR__ . "/util/Log.php");
 require_once(__DIR__ . "/util/Cache.php");
@@ -7,25 +12,17 @@ require_once(__DIR__ . "/api/User.php");
 require_once(__DIR__ . "/api/Message.php");
 
 require_once(__DIR__ . "/api/Department.php");
-
-require_once (__DIR__)."/api/OpenFM.php";
-
 require_once (__DIR__ ."/util/Http.php");
 
-header("Access-Control-Allow-Origin: *");
-header('content-type:text/html;charset=utf8');
 
-//设置服务器为北京时间
-date_default_timezone_set('Asia/Shanghai');
+
+
 
 
 $auth = new Auth();
 $user = new User();
 $message = new Message();
 $deplist = new Department();
-$FM = new OpenFM();
-
-
 $http = new Http();
 
 $event = $_REQUEST["event"];
@@ -113,7 +110,7 @@ switch($event){
 
     case 'uploadimg':
         $accessToken = $auth->getAccessToken();
-        //上传文件改名
+        //上传文件改名,因为钉钉服务器不能识别tmp_name,所以需加更名
         $date=date('Ymdhis');//得到当前时间,如;20070705163148
         $fileName=$_FILES['media']['name'];//得到上传文件的名字
         $name=explode('.',$fileName);//将文件名以'.'分割得到后缀名,得到一个数组
@@ -125,16 +122,21 @@ switch($event){
         $_FILES['media']['tmp_name'] = $file.'/'.$newPath;
 
 //        $messageOpt = array('media'=>__DIR__.'/1515633654.jpg');
-        $result = $message->uploadImg($accessToken,$_FILES);
+        /*$result = $message->uploadImg($accessToken,$_FILES['media']);
+        echo json_encode($result, JSON_UNESCAPED_SLASHES);*/
 
 
 
-        /*//        $data['media'] = new CurlFile($messageOpt['uploadImg']['tmp_name']);
-        $data['media'] = new CurlFile(__DIR__.'/1515633654.jpg');
+        //        $data['media'] = new CurlFile($messageOpt['uploadImg']['tmp_name']);
+        $path = $_FILES['media']['tmp_name'];
+//        $name = $_FILES['media']['name'];
+        $data['media'] = new CurlFile($path);
+       $data['media']->mime = $_FILES['media']['type'];
+//        $data['media']['postname'] = 'abc';
 
 //        new \CURLFile(realpath($val["tmp_name"]),$val["type"],$val["name"])
-//        $data['type'] = 'file';
-        $url = "https://oapi.dingtalk.com/media/upload?access_token=ddc88e9478613956828ab31f08fe5435&type=image";
+//        $data['type'] = 'image';
+        $url = "https://oapi.dingtalk.com/media/upload?access_token=".$accessToken."&type=file";
         $ch = curl_init();
         curl_setopt($ch,CURLOPT_URL, $url);
         curl_setopt($ch,CURLOPT_RETURNTRANSFER,true);
@@ -142,7 +144,7 @@ switch($event){
         curl_setopt($ch,CURLOPT_POSTFIELDS,$data);
         $result = curl_exec($ch);
         curl_close($ch);
-        echo json_decode($result);*/
+        echo json_encode($result, JSON_UNESCAPED_SLASHES);
 
 
 
@@ -150,7 +152,7 @@ switch($event){
 //            array("access_token" => $accessToken,"type"=>'image'),
 //            $messageOpt,true
 //        );
-        echo $response;
+//        echo $response;
         break;
     case "downloadFile":
         break;
@@ -199,7 +201,7 @@ switch($event){
     case "getTodoWorkflowNum":
         $accessToken = $auth->getAccessToken();
         $opt['userid'] = $_POST['userid'];
-        $response = $http->post("/topapi//process/gettodonum",
+        $response = $http->post("/topapi/process/gettodonum",
         array("access_token" => $accessToken),
         $opt);
         echo json_encode($response, JSON_UNESCAPED_SLASHES);
@@ -210,14 +212,15 @@ switch($event){
              "token": "123456",
            "aes_key": "1234567890123456789012345678901234567890123",
            "url":"http://test001.vaiwan.com/eventreceive"*/
-        $opt['call_back_tag'] = array("user_add_org","user_leave_org","user_modify_org", "bpms_task_change","bpms_instance_change");
+//        $opt['call_back_tag'] = array("user_add_org","user_leave_org","user_modify_org", "bpms_task_change","bpms_instance_change");
+        $opt['call_back_tag'] = array("user_add_org","user_leave_org","user_modify_org","bpms_instance_change");
 //        $opt['call_back_tag'] = array( "bpms_task_change","bpms_instance_change");
 
         $opt['aes_key'] = "1234567890123456789012345678901234567890123";
         $opt['token'] = "123456";
         //一个企业好像只能申请一个回调服务器.目前使用liuzheng750417.imwork.net:8088,调试可切换r1w8478651.imwork.net:9998
-        //$opt['url'] = "http://r1w8478651.imwork.net:9998/eapp-corp/DingCallback.php";
-        $opt['url'] = "http://liuzheng750417.imwork.net:8088/corp_php-master/DingCallback.php";
+        $opt['url'] = "http://r1w8478651.imwork.net:9998/eapp-corp/DingCallback.php";
+//        $opt['url'] = "http://liuzheng750417.imwork.net:8088/corp_php-master/DingCallback.php";
 
         $response = $http->post("/call_back/register_call_back",
             array("access_token" => $accessToken),
@@ -279,7 +282,14 @@ switch($event){
         $deptUserList= $deplist->getDeptUserdetailsList($accessToken,$deptId);
         echo json_encode($deptUserList, JSON_UNESCAPED_SLASHES);
         break;
-
+    case "getProgressDingTalkSpaceId": //得到钉钉上传附件的钉盘空间
+        $accessToken = $auth->getAccessToken();
+        $opt['user_id'] = "1960580858678987";
+        $response = $http->post("/topapi/processinstance/cspace/info",
+            array("access_token" => $accessToken),
+            $opt);
+        echo json_encode($response, JSON_UNESCAPED_SLASHES);
+        break;
     default:
         echo json_encode(array("error_code"=>"4000"));
         break;
