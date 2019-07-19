@@ -13,6 +13,8 @@ require_once(__DIR__ . "/api/Department.php");
 //设置服务器为北京时间
 date_default_timezone_set('Asia/Shanghai');
 
+
+
 $signature = $_GET["signature"];
 $timeStamp = $_GET["timestamp"];
 $nonce = $_GET["nonce"];
@@ -172,13 +174,15 @@ switch ($eventType){
         $instanceId = $eventMsg->processInstanceId;
         $stage = $eventMsg->type; //阶段：start，finish
         $result = $eventMsg->type; //结果：refuse，agree
-        $templateId = $eventMsg->processCode; //结果：refuse，agree
+        $templateId = $eventMsg->processCode; //结果：钉钉模版ID
 
         //得到实例详情
         $processInstance = getDingdingInstance($instanceId);
-
+        if (!$processInstance){
+            break;
+        }
         //调试
-//        $processInstance = getDingdingInstance("6cdd9e45-4e86-482f-966f-4ef50581d335");
+//        $processInstance = getDingdingInstance("40567822-2ca5-4074-9200-2e2abc3de579");
       //得到实例详情中的相关值,结构如下
         /*"process_instance":{
         "title":"实例标题",
@@ -209,8 +213,7 @@ switch ($eventType){
 
         //将数据传入fm流程集合-2，建立实例DingdingId作为主键之一；
         writeWorkflowInstanceToFm($instanceId,$templateId,$processInstance);
-//        writeWorkflowInstanceToFm("6cdd9e45-4e86-482f-966f-4ef50581d335",$templateId,$processInstance);
-
+//        writeWorkflowInstanceToFm("40567822-2ca5-4074-9200-2e2abc3de579",$templateId,$processInstance);
         break;
     case "check_url"://do something
     default : //do something
@@ -356,6 +359,7 @@ function getDingdingInstance($instanceId){
     }else{
         //记录失败日志
         Log::i("【callback】失败:bpms_instance_change".$result->errcode);
+        return false;
     }
 
 }
@@ -367,64 +371,235 @@ function getDingdingInstance($instanceId){
  *
  */
 function writeWorkflowInstanceToFm($instanceId,$templateId,$processInstance){
-    $fields = $processInstance->form_component_values;
+
     $host = 'liuzheng750417.imwork.net:442';
     $db = '流程集合-2';
-    $layout = '请假记录';  //可以通过$templateId得到布局表名,比如请假记录
     $username = '钉钉';
     $pass = 'admin0422';
+    $layout = '审核工作流模版';
+
+
     $fmInstance = new fmREST ($host, $db, $username, $pass, $layout);
+    //通过查找$templateId,得到审核模版以既 记录表名(layout名)比如请假是 请假记录则后续操作是在请假记录 layout上操作
+    $request1['钉钉模版ID'] = $templateId;
+    $query = array ($request1);
+    $data['query'] = $query;
+    $result = $fmInstance->findRecords($data);
+    $request1 =[];$data=[];
+
+    //fm操作判断
+    if ($result['messages'][0]['code'] === '0'  ){
+        $workflowLayout =  $result['response']['data'][0]['fieldData']['记录表名'];
+        $exception =  $result['response']['data'][0]['fieldData']['例外项'];
+    }else{
+        $fmInstance->resultJudge($result,'该流程尚未关联钉钉审批,或查找记录表名(layout)失败');
+        return;
+    }
+
+    //打开记录表名的布局
+    $fmInstance = new fmREST ($host, $db, $username, $pass, $workflowLayout);
+
     //通过rest api将数据写入fm
     //查找$instanceId是否存在,存在则修改,不存在则建立
+    $values = $processInstance->form_component_values;
+    $opeaResult = $processInstance->operation_records;  //钉钉审批记录,相当于节点记录
 
     $request1['审核工作流实例::钉钉实例ID'] = $instanceId;
     $query = array ($request1);
     $data['query'] = $query;
+    $data["script"] = "delete portalData for instance node";
     $result = $fmInstance->findRecords($data);
+
+    $request1 =[];$data=[];
+
+
     //fm操作判断
     if ($result['messages'][0]['code'] === '0'  ){
         //fm唯一记录值
         $recordId = $result['response']['data'][0]['recordId'];
 
+        $record['审核工作流实例::钉钉模版ID'] = $templateId;
         $record['审核工作流实例::流程发起人钉钉ID'] = $processInstance->originator_userid;
         $record['审核工作流实例::流程开始时间'] =date('m/d/Y h:i:s A',strtotime($processInstance->create_time)) ;
         $record['审核工作流实例::流程结束时间'] = date('m/d/Y h:i:s A',strtotime($processInstance->finish_time));
         $record['审核工作流实例::钉钉审核状态'] = $processInstance->result;
 
-        $record['请假类型'] = $fields[0]->value;
-        $record['请假开始日期'] = date("m/d/Y",strtotime($fields[1]->value));
-        $record['请假开始阶段'] = $fields[2]->value;
-        $record['请假结束日期'] = date("m/d/Y",strtotime($fields[3]->value));
-        $record['请假结束阶段'] = $fields[4]->value;
-//        $record['请假时长'] = $fields[5]->vaue;
-        $record['事由'] = $fields[6]->value;
+
+       /* $record['请假类型'] = $values[0]->value;
+        $record['请假开始日期'] = date("m/d/Y",strtotime($values[1]->value));
+        $record['请假开始阶段'] = $values[2]->value;
+        $record['请假结束日期'] = date("m/d/Y",strtotime($values[3]->value));
+        $record['请假结束阶段'] = $values[4]->value;
+//        $record['请假时长'] = $values[5]->vaue;
+        $record['事由'] = $values[6]->value;*/
 //        $record['审核工作流实例::钉钉实例ID'] = $instanceId;
 
         $fmRecord['fieldData'] = $record;
+        $recValues = convertFormatToFm($values,$exception);
+        $fmRecord['fieldData'] =   array_merge($fmRecord['fieldData'], $recValues['fieldData']);
+
+
+        if ($recValues['portalData']) { //有入口值
+            $fmRecord['portalData'] = $recValues['portalData'];
+        }
+
+
+        //将审批步骤加入fm
+        $operateResult = operateResult($opeaResult);
+        if ($operateResult) {
+         /*   if ($fmRecord['portalData']) {
+              array_push($fmRecord['portalData'],$operateResult);
+            }else{
+                $fmRecord['portalData'] = $operateResult;
+            }*/
+            $fmRecord['portalData']['审核工作流实例节点'] = $operateResult;
+
+        }
         $recResult = $fmInstance->editRecord($recordId,$fmRecord);
         $fmInstance->resultJudge($recResult,'editRecord');
     }
     else if($result['messages'][0]['code'] === '401' /*未找到,则新建记录*/ ){
 /*        dataPreparation($userInfo,$fmRecord);*/
+        $record['审核工作流实例::钉钉模版ID'] = $templateId;
         $record['审核工作流实例::流程发起人钉钉ID'] = $processInstance->originator_userid;
-        $record['审核工作流实例::流程开始时间'] =date('m/d/Y h:i:s A',strtotime($processInstance->create_time)) ;
-        $record['审核工作流实例::流程结束时间'] = date('m/d/Y h:i:s A',strtotime($processInstance->finish_time));
+        $record['审核工作流实例::流程开始时间'] =$processInstance->create_time?date('m/d/Y h:i:s A',strtotime($processInstance->create_time)):"" ;
+        $record['审核工作流实例::流程结束时间'] =$processInstance->finish_time?date('m/d/Y h:i:s A',strtotime($processInstance->finish_time)):"";
         $record['审核工作流实例::钉钉审核状态'] = $processInstance->result;
-
-        $record['请假类型'] = $fields[0]->value;
-//       注意日期格式到fm使用m/d/Y,且是字符串,如6/23/2019
-        $record['请假开始日期'] = date("m/d/Y",strtotime($fields[1]->value));
-        $record['请假开始阶段'] = $fields[2]->value;
-        $record['请假结束日期'] = date("m/d/Y",strtotime($fields[3]->value));
-//        $record['请假结束日期'] = "6/23/2019";
-        $record['请假结束阶段'] = $fields[4]->value;
-//        $record['请假时长'] = $fields[5]->vaue;
-        $record['事由'] = $fields[6]->value;
         $record['审核工作流实例::钉钉实例ID'] = $instanceId;
 
+        /*$record['请假类型'] = $values[0]->value;
+//       注意日期格式到fm使用m/d/Y,且是字符串,如6/23/2019
+        $record['请假开始日期'] = date("m/d/Y",strtotime($values[1]->value));
+        $record['请假开始阶段'] = $values[2]->value;
+        $record['请假结束日期'] = date("m/d/Y",strtotime($values[3]->value));
+//        $record['请假结束日期'] = "6/23/2019";
+        $record['请假结束阶段'] = $values[4]->value;
+//        $record['请假时长'] = $values[5]->vaue;
+        $record['事由'] = $values[6]->value;*/
+
         $fmRecord['fieldData'] = $record;
+        $recValues = convertFormatToFm($values,$exception);
+        $fmRecord['fieldData'] =   array_merge($fmRecord['fieldData'], $recValues['fieldData']);
+        $fmRecord['script'] = "建立流程实例初始化";
+
+        if ($recValues['portalData']) { //有入口值
+            $fmRecord['portalData'] = $recValues['portalData'];
+        }
+
+        //将审批步骤加入fm
+        $operateResult = operateResult($opeaResult);
+        if ($operateResult) {
+            /*if ($fmRecord['portalData']) {
+                array_push($fmRecord['portalData'],$operateResult);
+            }else{
+                $fmRecord['portalData'] = $operateResult;
+            }*/
+            $fmRecord['portalData']['审核工作流实例节点'] = $operateResult;
+        }
         $recResult = $fmInstance->createRecord($fmRecord);
         $fmInstance->resultJudge($recResult,'createRecord');
     }
+    $fmInstance->logout();
+}
+
+/**
+ * 将form_component_values":[
+    {
+    "name":"名称",
+    "value":"示例值",
+    "ext_value":"示例值"
+ *   component_type = "DDDateField"
+
+    },
+    {name: "明细表", value: [
+        [{"name": "第一行", "value": "要"},
+        {"name": "第二行", "value": "人"}],
+        [{"name": "第一行", "value": "sdg"},
+        {"name": "第二行", "value": "dfadf"}]
+        ]
+    }
+},
+]格式
+ * 转换为
+ * fields['名称'] = '示例值'  fieldData数据
+ * portals['明细表'] = [['第一行'=>"要",'第二行'=>'人'],['第一行'=>"sdg",'第二行'=>'dfadf']] portalData数据
+ * 计算字段不计入,比如请假的时长
+ * $exception数组 指例外项,比如请假记录中的时长,是计算字段,不能赋值
+ *
+ */
+function convertFormatToFm($values,$exception){
+    $fields = [];
+    $portals = [];
+    foreach ($values as $key=>$item){
+        if (is_array($item->value)) { //是入口数据
+            //暂缺
+        } else { //说明是field数据
+            //$exception,例外项在fm中申明,不写入,比如计算字段,否则出错
+            if (!$exception || !strstr($exception,$item->name."¶") ) {
+                //目前只考虑了DDDateField,没有涉及日期区间等
+                switch ($item->component_type){
+                    case "DDDateField" : //钉钉传过来数据是日期
+                        $fields[$item->name] = $item->value?date("m/d/Y",strtotime($item->value)):"";
+                        break;
+                    case "DDPhotoField" : //图片组件
+                        $imageUrls = json_decode($item->value,true); //转为数组
+                        foreach ($imageUrls as $num=>$imageUrl) {
+                        /*    '重复字段(1)' => '1',
+                             '重复字段(2)' => '2',*/
+                            $fields[$item->name.'('.($num+1).')'] = $imageUrl;
+                        }
+                        break;
+                    case "TableField": //明细
+                        $portalName = $item->name;//例样品明细
+                        $portalValues = json_decode($item->value,true); //转为数组
+                        $portals[$portalName]=[];
+
+                        foreach ($portalValues as $portalItem){
+                            $rec = [];
+                            if (!$portalItem['rowValue']) {
+                                continue;  //没有入口值
+                            }
+                            foreach ($portalItem['rowValue'] as $field){
+                                if ($field['componentType'] === "DDDateField"){
+                                    $rec[$portalName . "::" . $field['label']] = $field['value']?date("m/d/Y",strtotime($field['value'])):"";
+                                }else {
+                                    $rec[$portalName . "::" . $field['label']] = $field['value'];
+                                }
+                            }
+                            if ($rec) {
+                                array_push($portals[$portalName],$rec);
+                            }
+                        }
+                        break;
+                    default:
+                        if ($item->name != "") {
+                            $fields[$item->name] = $item->value;
+                        }
+                }
+            }
+        }
+    }
+    $data['fieldData']=$fields;
+    if($portals){
+        $data['portalData']=$portals;
+    }
+    return $data;
+}
+
+
+//钉钉审批操作记录,转换成fm api 数组,下一步写入fm
+function operateResult($result) //
+{
+    $approvalPortal = [];
+    foreach ($result as $item) {
+        $record = [];
+        $record['审核工作流实例节点::userid'] = $item->userid;
+//        $record['审核工作流实例节点::审核时间'] = $item->date?date('m/d/Y h:i:s A',strtotime($item->date)):"" ;
+        $record['审核工作流实例节点::operation_result'] = $item->operation_result;
+        $record['审核工作流实例节点::remark'] = $item->remark==null?"":$item->remark;
+//        array_push($approvalPortal["审核工作流实例节点"],$record);
+        $approvalPortal[]=$record;
+    }
+    return $approvalPortal;
 
 }
